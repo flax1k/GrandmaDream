@@ -131,7 +131,7 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         selectedAuthToken = preferences.getString("authToken", "");
 
         Log.d(TAG, "accountName: " + selectedAccountName);
-        Log.d(TAG, "authToken: "   + selectedAuthToken);
+        Log.d(TAG, "authToken: " + selectedAuthToken);
 
         final String accountName = selectedAccountName;
         final String authToken = selectedAuthToken;
@@ -275,7 +275,9 @@ public class GrandmaDream extends DreamService implements OnClickListener {
                 return null;
             }
             protected void onPostExecute(Bitmap bmp) {
-                img.setImageBitmap(bmp);
+                if (img != null) {
+                    img.setImageBitmap(bmp);
+                }
                 scheduleNext();
             }
         }.execute(null, null, null);
@@ -300,20 +302,19 @@ public class GrandmaDream extends DreamService implements OnClickListener {
 
         double screen_ratio = (double) screenSize.x / (double) screenSize.y;
         double bmp_ratio = (double) bmp.getWidth() / (double) bmp.getHeight();
-        int min_num_pixels = (int) (bmp.getWidth() * bmp.getHeight() * MIN_IMG_SHOW);
 
         if (screen_ratio < bmp_ratio) {
             // needs horizontal crop to fit bmp height to screen height
             int cropped_width = (int) (bmp.getHeight() * screen_ratio);
-            int min_width = min_num_pixels / bmp.getHeight();
+            int min_width = (int) (bmp.getWidth() * MIN_IMG_SHOW);
 
             if (cropped_width < min_width) {
                 // cropped_width is cropping more than we want to allow, reduce crop
                 cropped_width = min_width;
             }
 
-            if (cropped_width < screenSize.x) {
-                float scale = (float) screenSize.x / (float) cropped_width;
+            if (bmp.getHeight() < screenSize.y) {
+                float scale = (float) screenSize.y / (float) bmp.getHeight();
                 scale_matrix.setScale(scale, scale);
                 filtered = true;
             }
@@ -329,16 +330,16 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         }
         else if (screen_ratio > bmp_ratio) {
             // needs vertical crop to fit bmp width to screen width
-            int cropped_height = (int) (bmp.getWidth() * screen_ratio);
-            int min_height = min_num_pixels / bmp.getWidth();
+            int cropped_height = (int) (bmp.getWidth() / screen_ratio);
+            int min_height = (int) (bmp.getHeight() * MIN_IMG_SHOW);
 
             if (cropped_height < min_height) {
                 // cropped_height is cropping more than we want to allow, reduce crop
                 cropped_height = min_height;
             }
 
-            if (cropped_height < screenSize.y) {
-                float scale = (float) screenSize.y / (float) cropped_height;
+            if (bmp.getWidth() < screenSize.x) {
+                float scale = (float) screenSize.x / (float) bmp.getWidth();
                 scale_matrix.setScale(scale, scale);
                 filtered = true;
             }
@@ -377,12 +378,15 @@ public class GrandmaDream extends DreamService implements OnClickListener {
     @Override
     public void onDetachedFromWindow() {
         // tidy up
+        Log.d(TAG, "onDetachedFromWindow");
         img.setOnClickListener(null);
+        stopped = true;
 
         super.onDetachedFromWindow();
     }
 
-    public void onClick(View v){
+    public void onClick(View v) {
+        Log.d(TAG, "onClick");
         stopped = true;
         this.finish();
     }
