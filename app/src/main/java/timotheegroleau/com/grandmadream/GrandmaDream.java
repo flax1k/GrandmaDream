@@ -50,10 +50,10 @@ import java.util.Collections;
 public class GrandmaDream extends DreamService implements OnClickListener {
 
     // Not a dynamic service yet...
-    private static final String SELECTED_ALBUM_GID = "6109397302746862529"; // bike ride airport
-    // private static final String SELECTED_ALBUM_GID = "6161617020037391681"; // Mamie chassin Cadre Digital
-    private static final int SHOW_NEXT_DELAY = 6000; // ms
-    private static final double MIN_IMG_SHOW = 0.80; // 80%
+    // private static final String SELECTED_ALBUM_GID = "6177701718759304609"; // Tim test album
+    private static final String SELECTED_ALBUM_GID = "6161617020037391681"; // Mamie chassin Cadre Digital
+    private static final int SHOW_NEXT_DELAY = 45 * 1000; // ms
+    private static final double MIN_IMG_SHOW = 0.75; // 75%
 
     private static final String TAG = GrandmaDream.class.getSimpleName();
 
@@ -69,7 +69,9 @@ public class GrandmaDream extends DreamService implements OnClickListener {
     private boolean stopped = false;
 
     private String selectedAccountName;
-    private String selectedAuthToken;
+    private String selectedAuthToken = null;
+
+    private AlbumEntry selectedAlbum = null;
 
     @Override
     public void onAttachedToWindow() {
@@ -109,12 +111,10 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         ddP.width = screenSize.x;
         ddP.height = screenSize.y;
 
-        Log.d(TAG, "" + screenSize.x + " " + screenSize.y);
+        Log.d(TAG, screenSize.toString());
 
-        // Log.d(TAG, screenSize.toString());
         img = new ImageView(this);
         img.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        // img.setImageResource(R.drawable.test);
         img.setOnClickListener(this);
 
         ddLayout.addView(img, ddP);
@@ -139,16 +139,11 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         picasaService = new PicasawebService("pictureframe");
         picasaService.setUserToken(authToken);
 
-        new AsyncTask<Void, Void, List<PhotoEntry>>() {
+        new AsyncTask<Void, Void, AlbumEntry>() {
             @Override
-            protected List<PhotoEntry> doInBackground(Void... voids) {
-                List<AlbumEntry> albums = null;
+            protected AlbumEntry doInBackground(Void... voids) {
                 try {
-                    albums = getAlbums(accountName);
-                    AlbumEntry album = albums.get(0);
-                    Log.d(TAG, "Album name: " + album.getName() + "; gid: " + album.getGphotoId() + "; Album id: " + album.getId());
-
-                    return getPhotos(accountName, album);
+                    return getAlbum(accountName, SELECTED_ALBUM_GID);
                 } catch (ServiceForbiddenException e) {
                     Log.e(TAG, "Token expired, invalidating");
                     invalidate_and_renew_token();
@@ -157,10 +152,36 @@ public class GrandmaDream extends DreamService implements OnClickListener {
                 }
                 return null;
             }
-            protected void onPostExecute(List<PhotoEntry> result) {
-                if (result == null) return;
+            protected void onPostExecute(AlbumEntry album) {
+                if (album == null) {
+                    stopped = true;
+                    finish();
+                    return;
+                }
 
-                photos = result;
+                selectedAlbum = album;
+                refreshPhotos();
+            }
+        }.execute(null, null, null);
+    }
+
+    private void refreshPhotos() {
+        Log.d(TAG, "refreshPhotos()");
+        new AsyncTask<Void, Void, List<PhotoEntry>>() {
+            @Override
+            protected List<PhotoEntry> doInBackground(Void... voids) {
+                try {
+                    return getPhotos(selectedAccountName, selectedAlbum);
+                } catch (ServiceForbiddenException e) {
+                    Log.e(TAG, "Token expired, invalidating");
+                    invalidate_and_renew_token();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                return new ArrayList<PhotoEntry>();
+            }
+            protected void onPostExecute(List<PhotoEntry> list) {
+                photos = list;
                 current_photo_index = 0;
                 showNext();
             }
@@ -168,6 +189,7 @@ public class GrandmaDream extends DreamService implements OnClickListener {
     }
 
     private void invalidate_and_renew_token() {
+        Log.d(TAG, "invalidate_and_renew_token()");
         am = (AccountManager) getSystemService(ACCOUNT_SERVICE);
 
         Account[] list = am.getAccounts();
@@ -186,11 +208,15 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         }
 
         am.invalidateAuthToken("com.google", selectedAuthToken);
+        selectedAuthToken = null;
 
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences( getApplicationContext() );
         SharedPreferences.Editor editor = preferences.edit();
         editor.remove("authToken");
         editor.commit();
+
+        stopped = true;
+        finish();
 
         /*
         am.getAuthToken(
@@ -203,13 +229,13 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         /**/
     }
 
+    /*
     private class OnTokenAcquired implements AccountManagerCallback<Bundle> {
         @Override
         public void run(AccountManagerFuture<Bundle> result) {
             try {
                 Bundle b = result.getResult();
 
-                /*
                 if (b.containsKey(AccountManager.KEY_INTENT)) {
                     Log.d(TAG, "KEY_INTENT detected, requesting again...");
                     Intent intent = b.getParcelable(AccountManager.KEY_INTENT);
@@ -219,7 +245,6 @@ public class GrandmaDream extends DreamService implements OnClickListener {
                     startActivityForResult(intent, REQUEST_AUTHENTICATE);
                     return;
                 }
-                /**/
 
                 if (b.containsKey(AccountManager.KEY_AUTHTOKEN)) {
                     final String authToken = b.getString(AccountManager.KEY_AUTHTOKEN);
@@ -236,19 +261,20 @@ public class GrandmaDream extends DreamService implements OnClickListener {
             }
         }
     }
+    /**/
 
     public void showNext() {
         if (stopped) return;
         if (photos == null) return;
 
-        current_photo_index++;
+        Log.d(TAG, "showNext()");
 
         if (current_photo_index >= photos.size()) {
-            Collections.shuffle(photos);
-            current_photo_index = 0;
+            refreshPhotos();
+            return;
         }
 
-        PhotoEntry photo = photos.get(current_photo_index);
+        PhotoEntry photo = photos.get(current_photo_index++);
         String imgURL = photo.getMediaContents().get(0).getUrl() + "?imgmax=1600";
         URL correctPhotoURL;
 
@@ -286,6 +312,7 @@ public class GrandmaDream extends DreamService implements OnClickListener {
     private void scheduleNext() {
         if (stopped) return;
 
+        Log.d(TAG, "scheduleNext()");
         final Handler handler = new Handler();
         handler.postDelayed(new Runnable() {
             @Override
@@ -304,6 +331,8 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         double bmp_ratio = (double) bmp.getWidth() / (double) bmp.getHeight();
 
         if (screen_ratio < bmp_ratio) {
+            Log.d(TAG, "Horizontal crop necessary");
+
             // needs horizontal crop to fit bmp height to screen height
             int cropped_width = (int) (bmp.getHeight() * screen_ratio);
             int min_width = (int) (bmp.getWidth() * MIN_IMG_SHOW);
@@ -313,8 +342,8 @@ public class GrandmaDream extends DreamService implements OnClickListener {
                 cropped_width = min_width;
             }
 
-            if (bmp.getHeight() < screenSize.y) {
-                float scale = (float) screenSize.y / (float) bmp.getHeight();
+            if (cropped_width < screenSize.x) {
+                float scale = (float) screenSize.x / (float) cropped_width;
                 scale_matrix.setScale(scale, scale);
                 filtered = true;
             }
@@ -329,6 +358,8 @@ public class GrandmaDream extends DreamService implements OnClickListener {
             );
         }
         else if (screen_ratio > bmp_ratio) {
+            Log.d(TAG, "Vertical crop necessary");
+
             // needs vertical crop to fit bmp width to screen width
             int cropped_height = (int) (bmp.getWidth() / screen_ratio);
             int min_height = (int) (bmp.getHeight() * MIN_IMG_SHOW);
@@ -338,8 +369,8 @@ public class GrandmaDream extends DreamService implements OnClickListener {
                 cropped_height = min_height;
             }
 
-            if (bmp.getWidth() < screenSize.x) {
-                float scale = (float) screenSize.x / (float) bmp.getWidth();
+            if (min_height < screenSize.y) {
+                float scale = (float) screenSize.y / (float) min_height;
                 scale_matrix.setScale(scale, scale);
                 filtered = true;
             }
@@ -354,7 +385,9 @@ public class GrandmaDream extends DreamService implements OnClickListener {
             );
         }
         else {
+            Log.d(TAG, "No cropping necessary");
             if (bmp.getWidth() < screenSize.x) {
+                Log.d(TAG, "Upscale necessary");
                 float scale = (float) screenSize.x / (float) bmp.getWidth();
                 scale_matrix.setScale(scale, scale);
 
@@ -388,7 +421,7 @@ public class GrandmaDream extends DreamService implements OnClickListener {
     public void onClick(View v) {
         Log.d(TAG, "onClick");
         stopped = true;
-        this.finish();
+        finish();
     }
 
     public <T extends GphotoFeed> T getFeed(String feedHref,
@@ -399,6 +432,8 @@ public class GrandmaDream extends DreamService implements OnClickListener {
 
     public List<AlbumEntry> getAlbums(String userId) throws IOException,
             ServiceException {
+
+        Log.d(TAG, "getAlbums()");
 
         String userFeedUrl = API_PREFIX + userId;
         Log.d(TAG, "Get Album. URL: " + userFeedUrl);
@@ -421,10 +456,37 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         return albums;
     }
 
+    public AlbumEntry getAlbum(String userId, String album_gid) throws IOException,
+            ServiceException {
+
+        Log.d(TAG, "getAlbum()");
+
+        String userFeedUrl = API_PREFIX + userId;
+        Log.d(TAG, "Get Album. URL: " + userFeedUrl);
+        UserFeed userFeed = getFeed(userFeedUrl, UserFeed.class);
+
+        List<GphotoEntry> entries = userFeed.getEntries();
+        AlbumEntry res = null;
+        for (GphotoEntry entry : entries) {
+
+            AlbumEntry ae = new AlbumEntry(entry);
+            if (!ae.getGphotoId().equals(album_gid)) continue;
+
+            Log.d(TAG, "Found Album: " + ae.getName());
+            res = ae;
+            break;
+        }
+
+        return res;
+    }
+
     public List<PhotoEntry> getPhotos(String userId, AlbumEntry album) throws IOException,
             ServiceException{
+
+        Log.d(TAG, "getPhotos()");
+
         AlbumFeed feed = album.getFeed(PhotoData.KIND);
-        int left = 2;
+
         List<PhotoEntry> photos = new ArrayList<PhotoEntry>();
         for (GphotoEntry entry : feed.getEntries()) {
             PhotoEntry pe = new PhotoEntry(entry);
