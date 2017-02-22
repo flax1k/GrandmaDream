@@ -274,8 +274,10 @@ public class GrandmaDream extends DreamService implements OnClickListener {
             return;
         }
 
+        int max_size = Math.max(screenSize.x, screenSize.y);
+
         PhotoEntry photo = photos.get(current_photo_index++);
-        String imgURL = photo.getMediaContents().get(0).getUrl() + "?imgmax=1600";
+        String imgURL = photo.getMediaContents().get(0).getUrl() + "?imgmax=" + max_size;
         URL correctPhotoURL;
 
         try {
@@ -344,6 +346,7 @@ public class GrandmaDream extends DreamService implements OnClickListener {
 
             if (cropped_width < screenSize.x) {
                 float scale = (float) screenSize.x / (float) cropped_width;
+                Log.d(TAG, "Scaling necessary: " + scale);
                 scale_matrix.setScale(scale, scale);
                 filtered = true;
             }
@@ -358,19 +361,20 @@ public class GrandmaDream extends DreamService implements OnClickListener {
             );
         }
         else if (screen_ratio > bmp_ratio) {
-            Log.d(TAG, "Vertical crop necessary");
-
             // needs vertical crop to fit bmp width to screen width
             int cropped_height = (int) (bmp.getWidth() / screen_ratio);
             int min_height = (int) (bmp.getHeight() * MIN_IMG_SHOW);
+
+            Log.d(TAG, "Vertical crop necessary, cropped height: " + cropped_height + "; min_height: " + min_height);
 
             if (cropped_height < min_height) {
                 // cropped_height is cropping more than we want to allow, reduce crop
                 cropped_height = min_height;
             }
 
-            if (min_height < screenSize.y) {
-                float scale = (float) screenSize.y / (float) min_height;
+            if (cropped_height < screenSize.y) {
+                float scale = (float) screenSize.y / (float) cropped_height;
+                Log.d(TAG, "Scaling necessary: " + scale);
                 scale_matrix.setScale(scale, scale);
                 filtered = true;
             }
@@ -403,6 +407,7 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         }
 
         Log.d(TAG, "Original image size: " + bmp.getWidth() + 'x' + bmp.getHeight());
+        // Log.d(TAG, "Screen size: " + screenSize.x + 'x' + screenSize.y);
         Log.d(TAG, "Cropped image size: " + cropped_bmp.getWidth() + 'x' + cropped_bmp.getHeight());
 
         return cropped_bmp;
@@ -470,6 +475,8 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         for (GphotoEntry entry : entries) {
 
             AlbumEntry ae = new AlbumEntry(entry);
+            Log.d(TAG, "Looking at Album: " + ae.getGphotoId() + ": " + ae.getName());
+
             if (!ae.getGphotoId().equals(album_gid)) continue;
 
             Log.d(TAG, "Found Album: " + ae.getName());
