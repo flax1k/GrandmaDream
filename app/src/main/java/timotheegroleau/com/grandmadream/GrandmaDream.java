@@ -1,15 +1,6 @@
 package timotheegroleau.com.grandmadream;
 
-import android.accounts.Account;
-import android.accounts.AccountManager;
-import android.accounts.AccountManagerCallback;
-import android.accounts.AccountManagerFuture;
-import android.content.Intent;
-import android.os.Bundle;
 import android.util.Log;
-
-import android.preference.PreferenceManager;
-import android.content.SharedPreferences;
 
 import android.graphics.BitmapFactory;
 import android.graphics.Bitmap;
@@ -17,16 +8,8 @@ import android.graphics.Matrix;
 import android.os.AsyncTask;
 import android.os.Handler;
 
-import com.google.gdata.client.photos.PicasawebService;
-import com.google.gdata.data.photos.AlbumEntry;
-import com.google.gdata.data.photos.AlbumFeed;
-import com.google.gdata.data.photos.PhotoData;
-import com.google.gdata.data.photos.GphotoEntry;
-import com.google.gdata.data.photos.GphotoFeed;
-import com.google.gdata.data.photos.PhotoEntry;
-import com.google.gdata.data.photos.UserFeed;
-import com.google.gdata.util.ServiceException;
-import com.google.gdata.util.ServiceForbiddenException;
+import java.util.Arrays;
+import java.security.SecureRandom;
 
 import android.graphics.Point;
 import android.service.dreams.DreamService;
@@ -35,43 +18,46 @@ import android.view.View.OnClickListener;
 import android.widget.GridLayout;
 import android.widget.ImageView;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.FileOutputStream;
+import java.io.FileInputStream;
+
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
-import java.util.Collections;
+import org.apache.commons.io.IOUtils;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 
 /**
  * Created by timothee on 18/7/15.
  */
 public class GrandmaDream extends DreamService implements OnClickListener {
-
     // Not a dynamic service yet...
-    // private static final String SELECTED_ALBUM_GID = "6177701718759304609"; // Tim test album
-    private static final String SELECTED_ALBUM_GID = "6161617020037391681"; // Mamie chassin Cadre Digital
+    private static final String sharedAlbumUrl = "https://photos.google.com/share/AF1QipNwbarcShrqZ0EkwsuvFvG9xcSoF8bRJOa0O6ixKbQxhLEk7u_YvRQlmZjQAlDhHg?key=cmFxU0RTOHg3M0FfU1BkT0ZickhES0E2aXNmQUZn";
+
+    public enum Mode { ONLINE, LOCAL }
+
     private static final int SHOW_NEXT_DELAY = 45 * 1000; // ms
     private static final double MIN_IMG_SHOW = 0.75; // 75%
 
     private static final String TAG = GrandmaDream.class.getSimpleName();
 
-    private PicasawebService picasaService;
-    AccountManager am;
+    private SecureRandom random = new SecureRandom(); // probably overkill, but am trying to get really good uniform random distribution, Math.random() is giving me too many repeats of particular value range for some reason :/
+
     private Point screenSize;
     private ImageView img;
-    private static final String API_PREFIX = "https://picasaweb.google.com/data/feed/api/user/";
 
-    private List<PhotoEntry> photos = null;
+    private List<String> photos = null;
     private int current_photo_index;
 
+    private Mode mode;
     private boolean stopped = false;
-
-    private String selectedAccountName;
-    private String selectedAuthToken = null;
-
-    private AlbumEntry selectedAlbum = null;
 
     @Override
     public void onAttachedToWindow() {
@@ -111,7 +97,7 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         ddP.width = screenSize.x;
         ddP.height = screenSize.y;
 
-        Log.d(TAG, screenSize.toString());
+        Log.d(TAG, "Screensize: " + screenSize.toString());
 
         img = new ImageView(this);
         img.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
@@ -122,146 +108,94 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         // Set the dream layout
         setContentView(ddLayout);
 
-        startFrame();
-    }
-
-    private void startFrame() {
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences( getApplicationContext() );
-        selectedAccountName = preferences.getString("accountName", "");
-        selectedAuthToken = preferences.getString("authToken", "");
-
-        Log.d(TAG, "accountName: " + selectedAccountName);
-        Log.d(TAG, "authToken: " + selectedAuthToken);
-
-        final String accountName = selectedAccountName;
-        final String authToken = selectedAuthToken;
-
-        picasaService = new PicasawebService("pictureframe");
-        picasaService.setUserToken(authToken);
-
-        new AsyncTask<Void, Void, AlbumEntry>() {
-            @Override
-            protected AlbumEntry doInBackground(Void... voids) {
-                try {
-                    return getAlbum(accountName, SELECTED_ALBUM_GID);
-                } catch (ServiceForbiddenException e) {
-                    Log.e(TAG, "Token expired, invalidating");
-                    invalidate_and_renew_token();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-                return null;
-            }
-            protected void onPostExecute(AlbumEntry album) {
-                if (album == null) {
-                    stopped = true;
-                    finish();
-                    return;
-                }
-
-                selectedAlbum = album;
-                refreshPhotos();
-            }
-        }.execute(null, null, null);
+        // Let's go
+        refreshPhotos();
     }
 
     private void refreshPhotos() {
         Log.d(TAG, "refreshPhotos()");
-        new AsyncTask<Void, Void, List<PhotoEntry>>() {
+        new AsyncTask<Void, Void, List<String>>() {
             @Override
-            protected List<PhotoEntry> doInBackground(Void... voids) {
+            protected List<String> doInBackground(Void... voids) {
                 try {
-                    return getPhotos(selectedAccountName, selectedAlbum);
-                } catch (ServiceForbiddenException e) {
-                    Log.e(TAG, "Token expired, invalidating");
-                    invalidate_and_renew_token();
-                } catch (Exception e) {
-                    e.printStackTrace();
+                    List<String> photoUrls = getPhotoUrlsFromPublicSharedAlbum(sharedAlbumUrl);
+
+                    if (photoUrls.size() <= 0) {
+                        throw new Exception("Album unexpectedly empty");
+                    }
+
+                    mode = Mode.ONLINE;
+                    return photoUrls;
                 }
-                return new ArrayList<PhotoEntry>();
+                catch (Exception e) {
+                    mode = Mode.LOCAL;
+                    return Arrays.asList(fileList());
+                }
             }
-            protected void onPostExecute(List<PhotoEntry> list) {
-                photos = list;
+            protected void onPostExecute(List<String> list) {
+                if (list == null || list.size() <= 0) {
+                    if (photos == null) {
+                        finish();
+                        return;
+                    }
+                }
+                else {
+                    photos = list;
+                }
+
                 current_photo_index = 0;
                 showNext();
             }
         }.execute(null, null, null);
     }
 
-    private void invalidate_and_renew_token() {
-        Log.d(TAG, "invalidate_and_renew_token()");
-        am = (AccountManager) getSystemService(ACCOUNT_SERVICE);
+    // return non-linear indexes from a set
+    // we convert a discreet list into a continuous function
+    // args:
+    //   - p1: probability of picking first element
+    //   - pn: probability of picking last element n
+    //   - n: number of element in the list
+    public int getIndex(double p1, double pn, double n) {
+        double a, b, c;
 
-        Account[] list = am.getAccounts();
-        Account selectedAccount = null;
+        // only one element in the list
+        if (n == 1) return 0;
 
-        for (Account a : list) {
-            if (a.name.equals(selectedAccountName)) {
-                Log.d(TAG, "Account found: " + a.name);
-                selectedAccount = a;
-                break;
-            }
-        }
+        // same weight for each entry
+        if (p1 == pn || mode == Mode.LOCAL) return (int) Math.floor(random.nextDouble() * n);
 
-        if (selectedAccount == null) {
-            Log.d(TAG, "Unabel to find account");
-        }
+        // we have a slope for the weights of each entry, do some math magic!
 
-        am.invalidateAuthToken("com.google", selectedAuthToken);
-        selectedAuthToken = null;
+        // line coefficients
+        // we're working with 2 linear equations:
+        //    - p1 = a * 0.5 + b
+        //    - pn = a * (n - 0.5) + b
 
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences( getApplicationContext() );
-        SharedPreferences.Editor editor = preferences.edit();
-        editor.remove("authToken");
-        editor.commit();
+        a = (p1-pn)/(1-n);
+        b = p1 - a * 0.5;
 
-        stopped = true;
-        finish();
+        // quadratic coefficients from integration
+        //     - y = ax + b   =>   y = a/2x^2 + bx + c
+        a /= 2;
+        b = b;
+        c = 0;
 
-        /*
-        am.getAuthToken(
-                selectedAccount,       // Account retrieved using getAccountsByType()
-                "lh2",                 // Auth scope
-                null,                  // Authenticator-specific options
-                this,                  // Your activity ... meh, this is not an activity!
-                new OnTokenAcquired(), // Callback called when a token is successfully acquired
-                null);                 // Callback called if an error occ
-        /**/
+        // determine range of y by computing largest integral value at n
+        // note: the integral is increasing regardless of whether the probably weight slope was downwards OR upwards
+        double max = a * n * n + b * n + c;
+        double r = random.nextDouble();
+        double y = r * max;
+
+        c -= y; // so we can apply the quadratic formula ax^2 + bx + c = 0
+
+        double val = (-b + Math.sqrt(b*b - 4*a*c))/(2*a);
+        int index = (int) Math.floor(val);
+
+        Log.d(TAG, "getIndex: coefs: " + a + ", " + b + ", " + c);
+        Log.d(TAG, "getIndex: vals: " + r + ", " + max + ", " + index + "/" + n);
+
+        return index;
     }
-
-    /*
-    private class OnTokenAcquired implements AccountManagerCallback<Bundle> {
-        @Override
-        public void run(AccountManagerFuture<Bundle> result) {
-            try {
-                Bundle b = result.getResult();
-
-                if (b.containsKey(AccountManager.KEY_INTENT)) {
-                    Log.d(TAG, "KEY_INTENT detected, requesting again...");
-                    Intent intent = b.getParcelable(AccountManager.KEY_INTENT);
-                    int flags = intent.getFlags();
-                    intent.setFlags(flags);
-                    flags &= ~Intent.FLAG_ACTIVITY_NEW_TASK;
-                    startActivityForResult(intent, REQUEST_AUTHENTICATE);
-                    return;
-                }
-
-                if (b.containsKey(AccountManager.KEY_AUTHTOKEN)) {
-                    final String authToken = b.getString(AccountManager.KEY_AUTHTOKEN);
-
-                    Log.d(TAG, "Auth token " + authToken);
-                    SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences( getApplicationContext() );
-                    SharedPreferences.Editor editor = preferences.edit();
-
-                    editor.putString("authToken", authToken);
-                    editor.commit();
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-    }
-    /**/
 
     public void showNext() {
         if (stopped) return;
@@ -269,43 +203,96 @@ public class GrandmaDream extends DreamService implements OnClickListener {
 
         Log.d(TAG, "showNext()");
 
-        if (current_photo_index >= photos.size()) {
+        if (current_photo_index++ >= photos.size()) {
             refreshPhotos();
             return;
         }
 
-        int max_size = Math.max(screenSize.x, screenSize.y);
+        int index = getIndex(1.0, 2.0, (double) photos.size());
 
-        PhotoEntry photo = photos.get(current_photo_index++);
-        String imgURL = photo.getMediaContents().get(0).getUrl() + "?imgmax=" + max_size;
-        URL correctPhotoURL;
+        String imgURL = photos.get(index);
+        String temp_filename;
+        URL temp_photoUrl = null;
 
-        try {
-            correctPhotoURL = new URL(imgURL);
-            Log.d(TAG, "Loading " + imgURL);
+        Log.d(TAG, "Loading " + imgURL);
+
+        if (mode == Mode.LOCAL) {
+            temp_filename = imgURL;
         }
-        catch (MalformedURLException e) {
-            scheduleNext();
-            return;
+        else {
+            try {
+                temp_photoUrl = new URL(imgURL);
+            } catch (MalformedURLException e) {
+                e.printStackTrace();
+                scheduleNext();
+                return;
+            }
+
+            temp_filename = temp_photoUrl.getFile().substring(1);
         }
 
-        final URL photoUrl = correctPhotoURL;
+        final String filename = temp_filename;
+        final URL photoUrl = temp_photoUrl;
 
         new AsyncTask<Void, Void, Bitmap>() {
             @Override
             protected Bitmap doInBackground(Void... voids) {
-                try {
-                    Bitmap bmp = BitmapFactory.decodeStream(photoUrl.openConnection().getInputStream());
-                    return cropBest(bmp);
-                } catch (Exception e) {
-                    e.printStackTrace();
+                int tries = 2;
+
+                do {
+                    Bitmap bmp;
+
+                    try {
+                        FileInputStream in = openFileInput(filename);
+                        Log.d(TAG, "Reading image from file: " + filename);
+                        bmp = BitmapFactory.decodeStream(in);
+                        in.close();
+                        return cropBest(bmp);
+                    }
+                    catch(FileNotFoundException e_file_read) {
+                        InputStream url_in;
+                        FileOutputStream fout = null;
+
+                        try {
+                            url_in = photoUrl.openStream();
+                        }
+                        catch(Exception e) {
+                            return null;
+                        }
+
+                        try {
+                            Log.d(TAG, "Fetching image from source: " + photoUrl + " and caching as " + filename);
+                            fout = openFileOutput(filename, getApplicationContext().MODE_PRIVATE);
+                            IOUtils.copy(url_in, fout);
+                            fout.close();
+                            continue;
+                        }
+                        catch(IOException e_file_not_found) { // captures FileNotFoundException too since it's a subclass
+                            try {
+                                // Try to read URL directly into bitmap
+                                bmp = BitmapFactory.decodeStream(url_in);
+                                return cropBest(bmp);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                                return null;
+                            }
+                        }
+                        finally {
+                            try { url_in.close(); } catch (Exception e) {}
+                            try { fout  .close(); } catch (Exception e) {}
+                        }
+                    }
+                    catch(Exception e) {
+                        e.printStackTrace();
+                        return null;
+                    }
                 }
+                while (--tries > 0);
+
                 return null;
             }
             protected void onPostExecute(Bitmap bmp) {
-                if (img != null) {
-                    img.setImageBitmap(bmp);
-                }
+                if (img != null) img.setImageBitmap(bmp);
                 scheduleNext();
             }
         }.execute(null, null, null);
@@ -429,80 +416,38 @@ public class GrandmaDream extends DreamService implements OnClickListener {
         finish();
     }
 
-    public <T extends GphotoFeed> T getFeed(String feedHref,
-                                            Class<T> feedClass) throws IOException, ServiceException {
-        Log.d(TAG, "Get Feed. URL: " + feedHref);
-        return picasaService.getFeed(new URL(feedHref), feedClass);
-    }
+    public List<String> getPhotoUrlsFromPublicSharedAlbum(String url) throws MalformedURLException, IOException {
+        String content = IOUtils.toString(new URL(url));
 
-    public List<AlbumEntry> getAlbums(String userId) throws IOException,
-            ServiceException {
+        List<String> URLs = new ArrayList<String>();
 
-        Log.d(TAG, "getAlbums()");
+        // Create a Pattern object (?s) is to ac tivate PATTERN.DOTALL
+        // Warning: This is a disgusting hack that reads data out of a javascript POJO sctructure with regex (pls dont vomit)
+        //          It is VERY fragile, and will stop functionning if google changes the way their shared albums are delivered
+        Matcher m1 = Pattern.compile("(?s)AF_initDataCallback\\((.+)\\}\\]\\n\\]").matcher(content);
 
-        String userFeedUrl = API_PREFIX + userId;
-        Log.d(TAG, "Get Album. URL: " + userFeedUrl);
-        UserFeed userFeed = getFeed(userFeedUrl, UserFeed.class);
-
-        List<GphotoEntry> entries = userFeed.getEntries();
-        List<AlbumEntry> albums = new ArrayList<AlbumEntry>();
-        for (GphotoEntry entry : entries) {
-
-            AlbumEntry ae = new AlbumEntry(entry);
-            if (!ae.getGphotoId().equals(SELECTED_ALBUM_GID)) continue;
-
-            Log.d(TAG, "Found Album: " + ae.getName());
-            albums.add(ae);
-            break;
+        if (!m1.find()) {
+            // unexpected format, need to report somewhere?
+            Log.d(TAG, "getPhotoUrlsFromPublicSharedAlbum: no url block match in content");
+            // TODO: return a list of files from files in local cache
+            return URLs;
         }
 
-        Collections.shuffle(albums);
+        Matcher m2 = Pattern.compile("\"(https://[^\"]+)\",(\\d+),(\\d+),").matcher(m1.group(1)); // 1.url, 2.width, 3.height
 
-        return albums;
-    }
+        while (m2.find()) {
+            String imgUrl = m2.group(1) + "=w" + m2.group(2) + "-h" + m2.group(3) + "-no";
 
-    public AlbumEntry getAlbum(String userId, String album_gid) throws IOException,
-            ServiceException {
-
-        Log.d(TAG, "getAlbum()");
-
-        String userFeedUrl = API_PREFIX + userId;
-        Log.d(TAG, "Get Album. URL: " + userFeedUrl);
-        UserFeed userFeed = getFeed(userFeedUrl, UserFeed.class);
-
-        List<GphotoEntry> entries = userFeed.getEntries();
-        AlbumEntry res = null;
-        for (GphotoEntry entry : entries) {
-
-            AlbumEntry ae = new AlbumEntry(entry);
-            Log.d(TAG, "Looking at Album: " + ae.getGphotoId() + ": " + ae.getName());
-
-            if (!ae.getGphotoId().equals(album_gid)) continue;
-
-            Log.d(TAG, "Found Album: " + ae.getName());
-            res = ae;
-            break;
+            URLs.add(imgUrl);
         }
 
-        return res;
-    }
-
-    public List<PhotoEntry> getPhotos(String userId, AlbumEntry album) throws IOException,
-            ServiceException{
-
-        Log.d(TAG, "getPhotos()");
-
-        AlbumFeed feed = album.getFeed(PhotoData.KIND);
-
-        List<PhotoEntry> photos = new ArrayList<PhotoEntry>();
-        for (GphotoEntry entry : feed.getEntries()) {
-            PhotoEntry pe = new PhotoEntry(entry);
-            photos.add(pe);
+        if (URLs.size() <= 0) {
+            Log.d(TAG, "getPhotoUrlsFromPublicSharedAlbum: no img match in content");
         }
-        Log.d(TAG, "Album " + album.getName() + " has " + photos.size() + " photos");
 
-        Collections.shuffle(photos);
+        // Fix chronological order to be the same as order in getPhotoUrls
+        Log.d(TAG, "getPhotoUrlsFromPublicSharedAlbum: acquired " + URLs.size() + " photos");
 
-        return photos;
+        return URLs;
     }
 }
