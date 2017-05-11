@@ -2,7 +2,7 @@ apply plugin: 'com.android.application'
 
 android {
     compileSdkVersion 22
-    buildToolsVersion "22.0.1"
+    buildToolsVersion '25.0.0'
 
     defaultConfig {
         applicationId "timotheegroleau.com.grandmadream"
@@ -23,13 +23,15 @@ android {
         exclude 'META-INF/LICENSE.txt'
         exclude 'META-INF/NOTICE.txt'
     }
+    dexOptions {
+        javaMaxHeapSize "8g"
+    }
 }
 
 dependencies {
-    compile fileTree(dir: 'libs', include: ['*.jar'])
+    compile fileTree(include: ['*.jar'], dir: 'libs')
     compile 'com.android.support:appcompat-v7:22.2.1'
     compile 'com.google.android.gms:play-services:6+'
-
     // Support Libraries
     /**/
     compile 'com.android.support:cardview-v7:22.2.1'
@@ -41,20 +43,19 @@ dependencies {
     compile 'com.android.support:support-annotations:22.2.1'
     compile 'com.android.support:support-v13:22.2.1'
     compile 'com.android.support:support-v4:22.2.1'
-
     compile 'com.google.gdata:core:1.47.1'
-
     /*
-    compile 'org.slf4j:integration:1.7.12'
-    compile (group:'com.google.api-client', name:'google-api-client', version:'1.20.0') {
-        // Exclude artifacts that the Android SDK provides.
-        exclude (group: 'xpp3', module: 'xpp3') //by both name and group
-        exclude (group: 'org.apache.httpcomponents', module: 'httpclient') //by both name and group
-        exclude (group: 'junit', module: 'junit') //by both name and group
-        exclude (group: 'com.google.android', module: 'android') //by both name and group
-    }
-    compile (group: 'com.google.api-client', name: 'google-api-client-android', version: '1.20.0') {
-        exclude (group: 'com.google.android.google-play-services', module: 'google-play-services')
-    }
-    /**/
+        compile 'org.slf4j:integration:1.7.12'
+        compile (group:'com.google.api-client', name:'google-api-client', version:'1.20.0') {
+            // Exclude artifacts that the Android SDK provides.
+            exclude (group: 'xpp3', module: 'xpp3') //by both name and group
+            exclude (group: 'org.apache.httpcomponents', module: 'httpclient') //by both name and group
+            exclude (group: 'junit', module: 'junit') //by both name and group
+            exclude (group: 'com.google.android', module: 'android') //by both name and group
+        }
+        compile (group: 'com.google.api-client', name: 'google-api-client-android', version: '1.20.0') {
+            exclude (group: 'com.google.android.google-play-services', module: 'google-play-services')
+        }
+        /**/
+    compile 'org.apache.directory.studio:org.apache.commons.io:2.4'
 }
